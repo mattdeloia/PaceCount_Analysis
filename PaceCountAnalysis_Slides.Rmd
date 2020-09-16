@@ -1,0 +1,360 @@
+---
+title: "Pace Count Analysis"
+author: "Northrop Grumman, Columbus"
+date: "8/28/2020"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(Rmisc)
+library(foreign)
+library (memisc)
+library(tidyverse)
+library(readxl)
+library(eRm)
+library(ggcorrplot)
+library(corrplot)
+library(chron)
+library(hms)
+library(mclust)
+library(imputeMissings)
+library(randomForest)
+library(plotly)
+library(ggdendro)
+library(cluster)
+library(wordcloud)
+library(wordcloud2)
+library(stringr)
+library(tm)
+library(gganimate)
+library(pracma)
+library(lubridate)
+library(tidyverse)
+library(readxl)
+library(corrplot)
+library(janitor)
+library(lubridate)
+library(chron)
+library(rpart)
+library(rpart.plot)
+
+df$Duration <- as.hms(df$Duration)
+
+df <- read_xlsx("PaceCountData_1Sept.xlsx")
+
+df2 <- df %>%     gather(pacecount:duration, key=Category, value=measurement)
+
+df2 %>% filter(Category=="pacecount") %>% na.omit() %>% 
+        ggplot() + 
+        geom_boxplot(aes(x=loadcarrying, y=measurement)) + facet_grid(day_night~., scales = "free_y")
+
+df %>% filter(day_night=="day", loadcarrying=="noload", length=="long") %>% summary()
+
+#filter out the outliers
+df3 <- df2 %>% filter(Category=="pacecount", ifelse(day_night=="day", measurement<80, measurement <90))
+
+df2_times <- df2 %>% filter(Category=="duration")
+df2_times_summary  <- df2_times  %>%  summarySE(measurevar = "measurement", groupvars = c("course", "day_night", "loadcarrying" ), na.rm = TRUE )
+
+#Plot of duration to complete 600m course
+df2_times_summary %>%   
+               ggplot(aes(x=course, y=round(measurement, 2), color=loadcarrying)) + 
+        geom_point() +
+        geom_errorbar(aes(ymin=measurement-ci, ymax=measurement+ci), width=.1 ) +
+        coord_flip()  +
+        geom_text(aes(label=round(measurement,1)), size=3, vjust=-.4, color="black") +
+         ylab("duration in minutes") +
+        theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+        xlab("") + facet_grid(day_night~., scales="free_x") + 
+        ggtitle("Time to Complete 600m Pace Count (RSLC_Students)") +
+        ggsave("600mDurations.png", width = 10, height = 8, units = "in")
+
+#Plot of linear regression plots (all categories)
+df %>% filter (pacecount<90, length=="long") %>% 
+        ggplot(aes(x=height, y=pacecount, color=day_night))  + 
+        geom_point(color="gray") + geom_smooth(method = "lm", aes(linetype=loadcarrying, color=day_night), size=1) + ylab("pacecount") +
+        theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+        scale_color_manual(values=c("blue", "tomato")) 
+
+#Multiple linear regression (Day & Night with duration)
+pacecount_model_data <-  df %>% 
+        filter(ifelse(day_night=="day", pacecount<80, pacecount <90), length=="long") %>%
+        na.omit() %>% 
+        mutate(day_night=if_else(day_night=="day", 0, 1),
+               loadcarrying = if_else(loadcarrying=="noload", 0, 1),
+               gender=if_else(gender=="M", 0, 1)) 
+
+pacecount_model <- lm(pacecount ~ duration + height + day_night +  loadcarrying + weight  , data = pacecount_model_data)
+summary(pacecount_model)
+
+#plot of residuals (ALL Day and Night)
+predictedvalue <- predict(pacecount_model, pacecount_model_data )
+residuals_lm <- pacecount_model_data %>% cbind(predictedvalue) %>%
+        mutate(residual_A=(pacecount-predictedvalue)) %>% 
+        mutate(SE_A=residual_A^2)
+residuals_lm$day_night <- as.factor(residuals_lm$day_night)
+residuals_lm %>% ggplot(aes(x=height, y=residual_A, color=day_night)) + 
+        geom_point() + 
+        geom_smooth() + 
+        ylim(-15,15)
+
+residuals_lm %>% ggplot() + geom_density(aes(x=residual_A, fill=day_night), alpha=.5)
+
+#Pacecount multiple linear regression (Day)
+pacecount_model_data1 <- df %>% filter(pacecount<=90, length=="long", day_night=="day") %>%
+        mutate(day_night=if_else(day_night=="day", 0, 1),
+               loadcarrying=if_else(loadcarrying=="noload", 0, 1))
+
+pacecount_model1 <-  lm(pacecount ~  loadcarrying + height  + weight + duration , data=pacecount_model_data1)
+summary(pacecount_model1)
+
+#plot of residuals
+predictedvalue_day <- predict(pacecount_model1, pacecount_model_data1 )
+residuals_day <- pacecount_model_data1 %>% cbind(predictedvalue_day) %>%
+        mutate(residual=(pacecount-predictedvalue_day)) %>% 
+        mutate(SE=residual^2)
+
+residuals_day %>%  ggplot(aes(x=height, y=residual)) + 
+        geom_point() + 
+        geom_smooth() + 
+        ylim(-10,10)
+
+#Pacecount multiple linear regression (Night)
+pacecount_model_data2 <- df %>% filter(pacecount<=90, length=="long", day_night=="night") %>%
+        mutate(day_night=if_else(day_night=="day", 0, 1),
+               loadcarrying=if_else(loadcarrying=="noload", 0, 1))
+
+pacecount_model2 <-  lm(pacecount ~  loadcarrying + height  + duration , data=pacecount_model_data2)
+summary(pacecount_model2)
+
+#plot of residuals2
+predictedvalue_night <- predict(pacecount_model2, pacecount_model_data2 )
+residuals_night <- pacecount_model_data2 %>% cbind(predictedvalue_night) %>%
+        mutate(residual=(pacecount-predictedvalue_night)) %>% 
+        mutate(SE=residual^2)
+
+residuals_night %>%  ggplot(aes(x=height, y=residual)) + 
+        geom_point() + 
+        geom_smooth() + 
+        ylim(-10,10)
+
+#Regression Trees
+df_regressiontrees <- df %>% 
+        filter(ifelse(day_night=="day", pacecount<80, pacecount <90), length=="long") %>%
+        na.omit()
+df_regressiontrees$day_night <- as.factor(df_regressiontrees$day_night)
+m <- rpart (pacecount ~ duration + height + day_night +  loadcarrying + weight, data = df_regressiontrees)
+rpart.plot(m, digits=2, fallen.leaves = TRUE, type=3, extra=101)
+
+predict_trees <- predict(m, df_regressiontrees)
+
+#Comparison to multiple linear regression SE
+comparison <- residuals_lm %>% cbind(predict_trees) %>%
+        mutate(residual_B=(pacecount-predict_trees)) %>% mutate(SE_B=residual_B^2) 
+#point plot of residuals by height
+comparison %>% select (height, residual_A, residual_B) %>%
+        gather(residual_A:residual_B, key=residual, value=value) %>%
+        ggplot(aes(x=height, y=value, color=residual)) + geom_point()
+
+#boxplot plot of Residuals and standard error comparison
+comparison %>% select (height, residual_A, residual_B) %>%
+        gather(residual_A:residual_B, key=residual, value=value) %>% mutate(value=abs(value)) %>% 
+        ggplot() + geom_boxplot(aes(y=value, x=residual))
+
+errorcomparison <- comparison %>% select(SE_A, SE_B) %>%  
+        gather(SE_A:SE_B, key=SE, value=value) %>% 
+        summarySE(groupvars="SE", measurevar = "value", na.rm = TRUE) %>% mutate(SE_value = ((value*N/(N-2))^.5))
+
+
+#Day/noload model
+df3a <- df %>% filter(day_night=="day", loadcarrying=="noload", length=="long" ) %>% 
+        na.omit()
+summary(df3a)
+lm1 <-  lm(pacecount ~ height + duration, data=df3a)
+summary(lm1)
+lm1_duration <- median(df3a$duration)
+
+#Day/load model
+df3b <- df %>% filter(day_night=="day", loadcarrying=="load", length=="long" )%>% na.omit()
+lm2 <-  lm(pacecount ~ height + duration , data=df3b)
+summary(lm2)
+lm2_duration <- median(df3b$duration)
+
+#Night/Noload model
+df3c <- df %>% filter(day_night=="night", loadcarrying=="noload", length=="long" )%>% na.omit()
+lm3 <-  lm(pacecount ~ height + duration , data=df3c)
+summary(lm3)
+lm3_duration <- median(df3c$duration)
+
+#Night/load model
+df3d <- df %>% filter(day_night=="night", loadcarrying=="load", length=="long" )%>% na.omit()
+lm4 <-  lm(pacecount ~ height + duration , data=df3d)
+summary(lm4)
+lm4_duration <- median(df3d$duration)
+
+#Data table based on height and model output
+height <- c(62:76) 
+height <- data.frame(height)
+duration <- lm1_duration
+pacecount_table1 <- data.frame(height, duration)
+day_noload <- round(predict(lm1, pacecount_table1), 0)
+
+duration <- lm2_duration
+pacecount_table2 <- data.frame(height, duration)
+day_load <- round(predict(lm2, pacecount_table2), 0)
+
+duration <- lm3_duration
+pacecount_table3 <- data.frame(height, duration)
+night_noload <- round(predict(lm3, pacecount_table3),0)
+
+duration <- lm4_duration
+pacecount_table4 <- data.frame(height, duration)
+night_load <- round(predict(lm4, pacecount_table4),0)
+
+pacecount_table_final <- height %>% cbind(day_noload, day_load, night_noload, night_load)
+
+#Stride_height ratio
+df_stride <- df %>% filter(length=="long") %>% mutate(stride_height_ratio = ((100/pacecount)/height))
+df_stride %>% ggplot(aes(x=day_night, y=stride_height_ratio)) + geom_boxplot(aes(fill=loadcarrying))
+
+df_stride %>% filter(stride_height_ratio>.016) %>% summarySE(groupvars = c("loadcarrying", "day_night"), measurevar = "stride_height_ratio", na.rm = TRUE)
+
+df_stride_table <- pacecount_table %>%
+        mutate(day_noload=round(100/(0.02148021*height),0)) %>% 
+        mutate(day_load=round(100/(0.02058330 *height),0)) %>%
+        mutate(night_noload=round(100/(0.02011878 *height),0)) %>% 
+        mutate(night_load=round(100/(0.01927920 *height),0))
+
+table_comparison <- pacecount_table2 %>%  left_join(df_stride_table, by="height")
+        
+
+#Calculating travel time for 1000m
+df_stride %>% filter(stride_height_ratio>.016) %>%  
+        gather(pacecount:duration, key=Category, value=measurement) %>% 
+        filter(Category=="duration") %>% ggplot(aes(x=loadcarrying, y=measurement)) +
+        geom_boxplot() + facet_grid(day_night~.)
+
+df_duration <- df_stride %>% filter(stride_height_ratio>.016) %>%  
+       summarySE(groupvars = c("loadcarrying", "day_night"), measurevar = "duration", na.rm = TRUE)
+
+df_duration2 <- df_duration %>% mutate(duration=10/6*duration, ci=10/6*sd) 
+df_duration2$loadcarrying <- factor(df_duration2$loadcarrying,levels = c("load", "noload"))
+df_duration2 %>%  
+        ggplot(aes(x=loadcarrying, y=round(duration, 1), color=loadcarrying)) + 
+        geom_point(size=3) +
+        geom_errorbar(aes(ymin=duration-ci, ymax=duration+ci), width=.1 ) +
+        coord_flip()  +
+        geom_text(aes(label=round(duration,1)), size=3, vjust=-.4, color="black") +
+        ylab("movement estimate in minutes") +
+        xlab("") + 
+        theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+        scale_color_manual (values=c("tomato", "skyblue")) +
+        facet_grid(day_night~., scales="free_y") + 
+        ggtitle("1000m Movement Duration") + 
+        ggsave("DurationEstimate_1km.png", width = 5, height = 4, units = "in")
+
+df_corrplot2 <- df %>% filter(length=="long")%>% select (pacecount, duration, height) %>% na.omit() 
+
+corrplot(cor(df_corrplot2), method="color", order="hclust", type="full", addrect=1, cl.lim=c(-1,1), addCoef.col="black", rect.col="green", diag = FALSE, number.font=1, number.digits = 1, number.cex = .7)
+
+df %>% filter(pacecount<90) %>% ggplot(aes(x=duration, y=pacecount)) + geom_point() + geom_smooth() + xlim(6,11) + facet_wrap(day_night~loadcarrying) 
+```
+
+## height and weight comparison
+possible entry errors?
+
+```{r heightweight, message=FALSE, warning=FALSE}
+df %>% ggplot(aes(x=height, y=weight)) + geom_point() + geom_smooth() + geom_abline(slope = 1, linetype="dashed", color='red') 
+```
+
+## short and long course comparison
+verification: points should be near dashed line
+
+```{r pacecountcomparison,  message=FALSE, warning=FALSE}
+df %>% filter(loadcarrying=="noload", day_night=="day") %>% 
+        select(course, ID, length, pacecount) %>% 
+        spread(key=length, value=pacecount)  %>% 
+        na.omit() %>%  
+        ggplot(aes(x=short, y=long, color=course)) + 
+        geom_point() + 
+        geom_smooth(se=FALSE) + 
+        geom_abline(slope = 1, linetype="dashed", color='red') + 
+        ylab("pace count (600m course)") + xlab("pace count (100m course)") + 
+        xlim(55,80) + ylim(55,80)
+```
+## short and long course comparison (durtion adjustment)
+verification: points should be near dashed line
+
+```{r pacecountcomparison2,  message=FALSE, warning=FALSE}
+df_x  <- df %>% filter(loadcarrying=="noload", day_night=="day", length=="long") %>% 
+        select(course, ID, length, duration, pacecount) %>%
+        mutate(pacecount=(pacecount+(7.679-duration)*2.8661))
+
+df_y <-  df %>% filter(loadcarrying=="noload", day_night=="day", length=="short") %>% 
+        select(course, ID, length, duration, pacecount) 
+df_z <- df_x %>% rbind(df_y) %>% select(-duration) %>% 
+        spread(key=length, value=pacecount)  
+
+df_z%>% 
+        ggplot(aes(x=short, y=long, color=course)) + 
+        geom_point() + 
+        geom_smooth(se=FALSE) + 
+        geom_abline(slope = 1, linetype="dashed", color='red') + 
+        ylab("pace count (600m course)") + xlab("pace count (100m course)")+ 
+        xlim(55,80) + ylim(55,80)
+```
+## load comparison (600m course)
+Most points are above the dashed line suggesting an impact of load on pace count; possible greater impact of load at night
+```{r daynightcomparison,  message=FALSE, warning=FALSE}
+df2 %>% filter(length=="long", Category=="pacecount") %>% select(course,ID, day_night, loadcarrying, measurement)  %>%  
+     spread(key=loadcarrying, value=measurement) %>%  na.omit() %>% 
+     ggplot(aes(x=noload, y=load, color=day_night)) + 
+     geom_point() + 
+     geom_smooth(se=FALSE) + 
+     geom_abline(slope = 1, linetype="dashed", color='red') + ylab("pace count UNDER load") + xlab("pace count NO load") +
+     scale_color_manual(values = c("lightgreen", "blue")) + ylim(55,85) + xlim(55,85)
+```
+
+## height impact on pace count
+negative correlation; correlation possibly modulated by a LOAD at night (see flattening of curve)
+
+```{r heightimpact,  message=FALSE, warning=FALSE}
+df2 %>%  filter(Category=="pacecount") %>% ggplot(aes(x=height,y=measurement, color=day_night)) + geom_point() + geom_smooth() +  
+     geom_hline(yintercept = 0, linetype="dashed", color="red") + 
+     scale_color_manual(values = c("lightgreen", "blue")) +
+          ylab("pace count (600m course)") + facet_grid(.~loadcarrying) + ylim(55,90)
+```
+
+## ruck weight and pace count
+variation in load does not appear significant
+
+```{r ruckweight, message=FALSE, warning=FALSE}
+df2 %>% filter(Category=="pacecount", loadcarrying=="load") %>%
+     ggplot(aes(x=ruckweight,y=measurement, color=day_night)) +
+     geom_point() + 
+     geom_smooth() +  
+     #geom_hline(yintercept = 0, linetype="dashed", color="red") + 
+     scale_color_manual(values = c("lightgreen", "blue")) +
+     ylab("pace count with load") + ylim(55,90)
+```
+
+## correlation plot
+
+```{r correlation, message=FALSE, warning=FALSE}
+df_corrplot <- df2 %>% select (-ruckweight) %>% filter(Category=="pacecount", length=="long")
+
+df_corrplot <- df_corrplot %>% spread(key=loadcarrying, value=measurement)  %>%  select(height, weight, load, noload) %>% na.omit()
+
+corrplot(cor(df_corrplot), method="color", order="hclust", type="full", addrect=3, cl.lim=c(-1,1), addCoef.col="black", rect.col="green", diag = FALSE, number.font=1, number.digits = 1, number.cex = .7)
+```
+
+
+
+
+
+
+
+
+
