@@ -1,7 +1,7 @@
 ---
 title: "Pace Count Analysis"
-author: "Northrop Grumman, Columbus"
-date: "11/13/2020"
+author: "Northrop Grumman, Columbus (version 11/17/2020)"
+date: "Purpose: (1) review key insights and supporting data visualizations; (2) discuss a project way-ahead."
 output: ioslides_presentation
 ---
 
@@ -217,24 +217,6 @@ count %>% group_by(course, gender) %>% summarise(n=n()) %>%
 
 - ***For further exploration:*** 20% (52/259) record lower pace counts under load, generally at night.  
 
-## Model Recommendation
-
-***Essential Features (R2 = 0.535):***
-
-- Day or Night Condition
-- Soldier Height  
-- Load/Ruckweight or Noload Condition 
-
-***Added Value (R2 = 0.597):***
-
-- Experience (beginner/intermediate/advanced) 
-
-***Small Information Gain:***
-
-- Gender (R2 = 0.614)  
-- Soldier Weight (R2 = 0.615)  
-
-
 ## Correlation plot
 
 ```{r correlation, message=FALSE, warning=FALSE}
@@ -280,7 +262,7 @@ df2 %>% filter(length=="long", Category=="pacecount") %>%
 ```
 
 ## Load (2 of 2)
-RSLC Student ave ruck = 25 lbs; OCS ave ruck = 50 lbs.
+RSLC Student average ruck = 25 lbs; OCS average ruck = 50 lbs.
 ```{r load2, message=FALSE, warning=FALSE}
 df_outliersremoved2a <- df_outliersremoved %>% select(-ruckweight, -duration) %>% filter(length!="short") %>% spread(key=loadcarrying, value = pacecount) 
 
@@ -320,6 +302,88 @@ df_outliersremoved2b %>%
      geom_vline(xintercept = 35, color="red", linetype="dotted", size=1) +
      theme(legend.title= element_text(color="black", size=10), legend.position = "right")+
      labs(caption = "Note: density function drawn for number of observations")
+```
+
+## Duration (1 of 4)
+
+```{r durationanalysis1,  message=FALSE, warning=FALSE}
+
+
+df_outliersremoved$day_night <- factor(df_outliersremoved$day_night, levels = c("night", "day"))
+df_outliersremoved$loadcarrying <- factor(df_outliersremoved$loadcarrying, levels = c("noload", "load"))
+
+df_outliersremoved %>%  filter (duration>0) %>% ggplot(aes(x=duration, y=pacecount)) +
+     geom_point() +
+     facet_grid(day_night~.) +
+  xlab("time duration (min)") +
+  ylab("pace count") +
+     geom_smooth() +
+     geom_vline(xintercept = df2_times_summary_day$measurement, color="green", linetype = "dashed" ) +
+     geom_vline(xintercept = df2_times_summary_night$measurement, color="red", linetype = "dashed" ) +
+     labs(caption = "green dashed = mean DAY duration; red dashed = mean NIGHT duration")
+```
+
+## Duration (2 of 4)
+
+```{r durationanalysis2,  message=FALSE, warning=FALSE}
+df2_times_summary %>%
+     ggplot(aes(x=course, y=round(measurement, 2), color=loadcarrying)) +
+     geom_point() +
+     geom_errorbar(aes(ymin=measurement-ci, ymax=measurement+ci), width=.1 ) +
+     coord_flip()  +
+     geom_text(aes(label=round(measurement,1)), size=3, vjust=-.4, color="black") +
+     ylab("duration on 600m course in minutes") +
+     theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+     scale_color_manual(values=c("green", "tomato")) +
+     xlab("") + facet_grid(day_night~., scales="free_x") 
+```
+
+## Duration (3 of 4)
+Duration used to inform a dummy variable for experience.
+
+```{r durationanalysis3,  message=FALSE, warning=FALSE}
+
+
+df_outliersremoved2$day_night <- factor(df_outliersremoved2$day_night, levels=c("night", "day"))
+df_outliersremoved2$ExperienceLevel <- factor(df_outliersremoved2$ExperienceLevel, levels=c("advanced", "intermediate", "beginner"))
+
+df_outliersremoved2 %>% na.omit(ExperienceLevel) %>% 
+     ggplot(aes(x=loadcarrying, y=pacecount, color=ExperienceLevel)) +
+     geom_boxplot() +
+     stat_summary(aes(label=round(..y..,2)), fun.y="median", geom="text", size=4, color="red", vjust=-.2) +
+     facet_grid(day_night~ExperienceLevel) +
+     xlab("") +
+     scale_color_manual(values = c("green", "skyblue", "tomato")) +
+  theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+     ylim(55,95) +
+  ylab ("pace count") +
+     labs(caption = "advanced = fastest 20% duration; beginner = slowest 20% duration; assessed from noload condition")
+```
+
+## Duration (4 of 4)
+
+```{r durationanalysis4,  message=FALSE, warning=FALSE}
+#Analysis of Impact of Proficiency.
+df_comp <- df_outliersremoved2 %>% filter(loadcarrying=="noload", length=="long") %>% select(ID,course, ExperienceLevel, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_noload_delta=night-day) %>% select(ID, course, day_night_noload_delta, ExperienceLevel)
+
+df_comp2 <- df_outliersremoved2 %>% filter(loadcarrying=="load", length=="long") %>% select(ID, course, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_load_delta=night-day) %>% select(ID, course, day_night_load_delta)
+
+#summary(Ave_durationdelta)
+
+df_comp %>% left_join (df_comp2) %>% filter(course != "RSLC_Cadre") %>% 
+        ggplot(aes(x=day_night_noload_delta, y=day_night_load_delta, color=ExperienceLevel)) + 
+        geom_point(size=2)  +
+        ylim(0,25) +
+        xlim(0,25) +
+        geom_abline(slope = 1, linetype="dashed", color="black", size=1) +
+        geom_hline(yintercept = 6, linetype="dotted", color="green", size=1)+
+        geom_vline(xintercept = 6, linetype="dotted", color="green", size=1) +
+        scale_color_manual("experience level", values = c("green", "gray", "tomato")) +
+        xlab("Day_Night pacecount delta (noload)") +
+        ylab("Day_Night pacecount delta (load)") +
+        theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+        facet_wrap(course~.) +
+  labs(caption = "advanced = fastest 20% duration; beginner = slowest 20% duration; assessed from noload condition")
 ```
 
 ## Gender
@@ -365,77 +429,7 @@ df2 %>% filter(day_night=="night", gender=="M", Category=="pacecount") %>%
         geom_smooth(se=FALSE)
 ```
 
-## Duration (1 of 3)
-
-```{r durationanalysis1,  message=FALSE, warning=FALSE}
-
-
-df_outliersremoved$day_night <- factor(df_outliersremoved$day_night, levels = c("night", "day"))
-df_outliersremoved$loadcarrying <- factor(df_outliersremoved$loadcarrying, levels = c("noload", "load"))
-
-df_outliersremoved %>%  filter (duration>0) %>% ggplot(aes(x=duration, y=pacecount)) +
-     geom_point() +
-     facet_grid(day_night~.) +
-  xlab("time duration (min)") +
-  ylab("pace count") +
-     geom_smooth() +
-     geom_vline(xintercept = df2_times_summary_day$measurement, color="green", linetype = "dashed" ) +
-     geom_vline(xintercept = df2_times_summary_night$measurement, color="red", linetype = "dashed" ) +
-     labs(caption = "green dashed = mean DAY duration; red dashed = mean NIGHT duration")
-```
-
-## Duration (2 of 3)
-
-```{r durationanalysis2,  message=FALSE, warning=FALSE}
-df2_times_summary %>%
-     ggplot(aes(x=course, y=round(measurement, 2), color=loadcarrying)) +
-     geom_point() +
-     geom_errorbar(aes(ymin=measurement-ci, ymax=measurement+ci), width=.1 ) +
-     coord_flip()  +
-     geom_text(aes(label=round(measurement,1)), size=3, vjust=-.4, color="black") +
-     ylab("duration on 600m course in minutes") +
-     theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-     scale_color_manual(values=c("green", "tomato")) +
-     xlab("") + facet_grid(day_night~., scales="free_x") 
-```
-
-## Duration (3 of 3)
-Does duration explain a level of experience?
-
-```{r durationanalysis3,  message=FALSE, warning=FALSE}
-
-
-df_outliersremoved2$day_night <- factor(df_outliersremoved2$day_night, levels=c("night", "day"))
-df_outliersremoved2$ExperienceLevel <- factor(df_outliersremoved2$ExperienceLevel, levels=c("advanced", "intermediate", "beginner"))
-
-df_outliersremoved2 %>% na.omit(ExperienceLevel) %>% 
-     ggplot(aes(x=loadcarrying, y=pacecount, color=ExperienceLevel)) +
-     geom_boxplot() +
-     stat_summary(aes(label=round(..y..,2)), fun.y="median", geom="text", size=4, color="red", vjust=-.2) +
-     facet_grid(day_night~ExperienceLevel) +
-     xlab("") +
-     scale_color_manual(values = c("green", "skyblue", "tomato")) +
-  theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-     ylim(55,95) +
-  ylab ("pace count") +
-     labs(caption = "advanced = fastest 20% duration; beginner = slowest 20% duration; assessed from noload condition")
-```
-
-## Back-up: Pace Count Table
-- Working
-
-## Back-up: Experience
-
-```{r experience,  message=FALSE, warning=FALSE}
-df_outliersremoved2 %>% ggplot(aes(x=height, y= pacecount, color=ExperienceLevel)) +
-  geom_point() + 
-  geom_smooth() + 
-  facet_grid(day_night~., scales = "free_y") +
-     scale_color_manual(values = c("green", "skyblue", "tomato")) +
-  theme(legend.title= element_text(color="black", size=10), legend.position = "top") 
-```
-
-## Back-up: Precision
+## Precision
 ```{r experience2,  message=FALSE, warning=FALSE}
 df_precision_plot <- df %>% select (course, ID, pacecount) %>% group_by(course, ID) %>% summarise(pacecount_sd = sd(pacecount)) 
 
@@ -446,8 +440,24 @@ df_precision_plot %>%
   labs(caption = "Note: std deviation determined from 4 trials (night/day, load/noload)")
 ```
 
-## Back-up: What Matters (1 of 2)
-Machine Learning with Regression Trees
+## What Matters (1 of 3) |Multiple Linear Regression
+
+***Essential Features (R2 = 0.535):***
+
+- Day or Night Condition
+- Soldier Height  
+- Load/Ruck weight or No load Condition 
+
+***Added Value (R2 = 0.597):***
+
+- Experience (beginner/intermediate/advanced) 
+
+***Small Information Gain:***
+
+- Gender (R2 = 0.614)  
+- Soldier Weight (R2 = 0.615) 
+
+## What Matters (2 of 3) |Machine Learning (Regression Trees)
 ```{r whatmatters1,  message=FALSE, warning=FALSE}
 df_regressiontrees <- df_outliersremoved2 %>%  
      filter(length=="long") 
@@ -461,46 +471,14 @@ regtree_report <- rownames_to_column(regtree_importance, var="Feature") %>%
 regtree_report %>% ggplot () + geom_col(aes(x=reorder(Feature, Importance, fun=max), y=Importance), fill= "skyblue") + coord_flip() + xlab("") + ylab("importance in pace count prediction")
 ```
 
-## Back-up: What Matters (2 of 2)
+## What Matters (3 of 3)|Machine Learning (Regression Trees)
 
 ```{r whatmatters2,  message=FALSE, warning=FALSE}
 rpart.plot(m, digits=2, fallen.leaves = TRUE, type=5, extra=101)
 ```
 
-## Back-up: Duration and day/night Delta
-
-```{r durationanalysis4,  message=FALSE, warning=FALSE}
-#Analysis of Impact of Proficiency.
-df_comp <- df_outliersremoved %>% filter(loadcarrying=="noload", length=="long") %>% select(ID,course, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_noload_delta=night-day) %>% select(ID, course, day_night_noload_delta)
-
-df_comp_b <- df_outliersremoved %>% filter(loadcarrying=="noload", length=="long") %>% select(ID,course, day_night,duration) %>% spread(key=day_night, value=duration) %>% na.omit() %>% mutate(day_night_noload_delta_duration=night-day) %>% select(ID, course, day_night_noload_delta_duration)
-
-df_comp2 <- df_outliersremoved %>% filter(loadcarrying=="load", length=="long") %>% select(ID, course, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_load_delta=night-day) %>% select(ID, course, day_night_load_delta)
-
-df_comp2_b <- df_outliersremoved %>% filter(loadcarrying=="load", length=="long") %>% select(ID, course, day_night,duration) %>% spread(key=day_night, value=duration) %>% na.omit() %>% mutate(day_night_load_delta_duration=night-day) %>% select(ID, course, day_night_load_delta_duration)
-
-Ave_durationdelta <- df_comp %>% left_join (df_comp2) %>% left_join(df_comp_b) %>% left_join(df_comp2_b) %>% na.omit() %>% mutate(Duration_delta = ((day_night_noload_delta_duration + day_night_load_delta_duration )/2)) %>% select(Duration_delta)
-#summary(Ave_durationdelta)
-
-df_comp %>% left_join (df_comp2) %>% left_join(df_comp_b) %>% 
-        left_join(df_comp2_b) %>%
-        na.omit() %>% mutate(Duration_delta = ((day_night_noload_delta_duration + day_night_load_delta_duration )/2), NightDuration_Delta = if_else(Duration_delta>2.45, "High > 2.5 min", if_else(Duration_delta>1.25, "Average", "Low < 1.25 min"))) %>%
-        ggplot(aes(x=day_night_noload_delta, y=day_night_load_delta, color=NightDuration_Delta)) + 
-        geom_point(size=2)  +
-        ylim(0,25) +
-        xlim(0,25) +
-        geom_abline(slope = 1, linetype="dashed", color="black", size=1) +
-        geom_hline(yintercept = 6, linetype="dotted", color="green", size=1)+
-        geom_vline(xintercept = 6, linetype="dotted", color="green", size=1) +
-        scale_color_manual("D_N duration delta", values = c("darkgray", "red", "green")) +
-        xlab("Day_Night pacecount delta (noload)") +
-        ylab("Day_Night pacecount delta (load)") +
-        theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-        facet_wrap(course~.)
-```
-
-## Back-up: Course Comparison (1 of 2)
-Individual results: points expected near dashed line
+## Course Comparison (1 of 2)
+Short (100m) vs. long (600m) course results: points expected near dashed line
 
 ```{r coursecomparison2,  message=FALSE, warning=FALSE}
 df %>% filter(loadcarrying=="noload", day_night=="day") %>% 
@@ -520,7 +498,7 @@ df %>% filter(loadcarrying=="noload", day_night=="day") %>%
      ylim(55,85)
 ```
 
-## Back-up: Course Comparison (2 of 2)
+## Course Comparison (2 of 2)
 
 ```{r course comparison1, message=FALSE, warning=FALSE}
 #Comparison of short and long course results (day, noload)
@@ -532,3 +510,66 @@ df_outliersremoved %>%
      theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
          labs(caption = "Note: day and noload conditions")
 ```
+
+## Study Comparison |Ranger/RSLC Land Nav vs. Pace Count Study
+
+```{r studycomparison, message=FALSE, warning=FALSE}
+#Comparison of study results
+df_LandNav <- read_xls("LandNavResults_4Nov20.xls") %>% 
+  select(WalkingPaceCount, NightPaceCount2, RuckPaceCount2) %>% 
+  gather(WalkingPaceCount:RuckPaceCount2, key=Category, value=Pacecount) %>% 
+  na.omit() %>% 
+  mutate(Event="LandNavStudy")
+df_LandNav <- rename(df_LandNav, pacecount = "Pacecount")
+
+a <- df_outliersremoved %>% 
+  filter(day_night=="day", loadcarrying=="noload", gender=="M") %>% mutate(Event="PaceCountStudy", Category="WalkingPaceCount") %>% 
+  select(Category, pacecount, Event)  
+b <- df_outliersremoved %>% 
+  filter(day_night=="night", loadcarrying=="noload", gender=="M") %>% 
+  mutate(Event="PaceCountStudy", Category="NightPaceCount2") %>% 
+  select(Category, pacecount, Event)  
+c <- df_outliersremoved %>% 
+  filter(day_night=="day", loadcarrying=="load", gender=="M") %>%
+  mutate(Event="PaceCountStudy", Category="RuckPaceCount2") %>% 
+  select(Category, pacecount, Event)
+
+df_comparison <- df_LandNav %>% rbind(a, b, c)
+df_comparison$pacecount <- as.numeric(df_comparison$pacecount) 
+df_comparison <- df_comparison %>% na.omit() %>% filter(pacecount<110)
+
+df_comparison %>% summarySE(measurevar = "pacecount", groupvars = c("Event", "Category")) %>% 
+     ggplot(aes(x=reorder(Category, pacecount, fun=mean), y=pacecount, color=Event, group=Event)) +
+     geom_point(size=3)+
+     geom_line() + xlab("")+
+     geom_errorbar(aes(ymin=pacecount-ci, ymax=pacecount+ci), width=.1 ) +
+     geom_text(aes(label=round(pacecount,1)), size=4, vjust=-.4, color="black") +
+     theme(legend.title= element_text(color="black", size=10), legend.position = "top")  + ylab("Pace Count Group Mean") +
+     ylim(65,75) + labs(caption = "Note: sample data includes males only; 62% of Ranger Students did not report a night pace count")
+```
+
+## Pace Count Table
+
+Table available at:
+
+https://github.com/mattdeloia/PaceCount_Analysis/blob/gh-pages/PaceCountTable(Final).png
+
+Interactive Application (under development) at:
+https://mattdeloia.shinyapps.io/PaceCount_Estimator/
+
+Notes:
+
+* Advanced Navigators make the following adjustments at each no load and load pace count: (-2) steps to all Day ; (-5) steps to all Night.
+* Beginner Navigators make the following adjustments at each no load and load pace count:  +2 steps to all Day; +5 steps to all Night.
+
+## Way-Ahead
+
+Transition key findings for doctrine and POI/lesson plans (DOTD brief):
+
+- Utility of a 600M cross-country pace count course
+- Day versus night pace counts
+- Effect of load on pace counts
+- Other considerations- NVDs, thick vegetation, weather 
+- Pace count estimator app?
+
+Article submission on Dead Reckoning with results from future ***Drift Course Study.***
