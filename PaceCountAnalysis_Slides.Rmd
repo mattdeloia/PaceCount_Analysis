@@ -1,6 +1,6 @@
 ---
 title: "Pace Count Analysis"
-author: "Northrop Grumman, Columbus (version 11/17/2020)"
+author: "Peraton, Columbus (version 11/17/2020)"
 date: "Purpose: (1) review key insights and supporting data visualizations; (2) discuss a project way-ahead."
 output: ioslides_presentation
 ---
@@ -42,35 +42,68 @@ library(rpart.plot)
 library(naniar)
 #library(ggstatplot)
 
-dfa <- read_xlsx("PaceCountData_1Sept.xlsx")
-dfb  <- read_xlsx("PaceCountData_13OCT.xlsx") %>% mutate(duration=duration_min+(duration_sec/60)) %>% select(-duration_min, -duration_sec)
-dfc  <- read_xlsx("PaceCountData_19Oct.xlsx") %>% mutate(duration=duration_min+(duration_sec/60)) %>% select(-duration_min, -duration_sec)
-dfd <- read_xlsx("PaceCountData_09NOV.xlsx") %>% mutate(duration=duration_min+(duration_sec/60)) %>% select(-duration_min, -duration_sec)
 #set dataframe and filter out ALC
-df <- dfa %>%
-  rbind(dfb) %>%
-  rbind(dfc) %>% 
-  rbind(dfd) %>%
-  mutate(duration=round(duration, 1)) %>% 
+df_pre <- read_xlsx("PaceCountData_1Sept.xlsx") %>%
+  rbind(read_xlsx("PaceCountData_13OCT.xlsx") %>%
+          mutate(duration=duration_min+(duration_sec/60)) %>% 
+          select(-duration_min, -duration_sec)) %>%
+  rbind(read_xlsx("PaceCountData_19Oct.xlsx") %>% 
+          mutate(duration=duration_min+(duration_sec/60)) %>% 
+          select(-duration_min, -duration_sec)) %>% 
+  rbind(read_xlsx("PaceCountData_09NOV.xlsx") %>% 
+          mutate(duration=duration_min+(duration_sec/60)) %>% 
+          select(-duration_min, -duration_sec)) %>%
+  mutate(duration=round(duration, 1)) %>%
   drop_na(pacecount)  %>%
-  filter(course!="ALC")  %>%
-  mutate(NVG = if_else(course =="RSLC_Cadre" & day_night=="night"|course == "RSLC_Students" & day_night=="night", "Yes", "No")) %>%
-  mutate(duration = if_else(course=="RSLC_Cadre" & day_night=="night" & loadcarrying=="load", 0, duration)) %>%
-  mutate(wtht_ratio = (weight/height) )
+  filter(course!="ALC")  %>% #remove ALC
+  mutate(NVG = if_else(course =="RSLC_Cadre" & day_night=="night"|course == "RSLC_Students" & day_night=="night", "Yes", "No")) %>% 
+  mutate(duration = if_else(course=="RSLC_Cadre" & day_night=="night" & loadcarrying=="load", 0, duration)) %>% 
+  mutate(duration = ifelse(duration==0,NA,duration)) 
 
-df <- replace_with_na_at(df, .vars="duration", condition = ~.x== 0)
-df$loadcarrying <- factor(df$loadcarrying, levels = c("noload", "load"))
+df <- df_pre %>% 
+  right_join(
+    df_pre %>%  
+  filter(loadcarrying=="noload", day_night =="night", length=="long") %>% 
+  mutate_at(vars(duration), scale)  %>% 
+  rbind(
+    df_pre %>%  
+  filter(loadcarrying=="noload", day_night =="day", length=="long") %>% 
+  mutate_at(vars(duration), scale)  
+  ) %>% 
+  select(ID, day_night, duration) %>% 
+  pivot_wider(names_from = "day_night", values_from = "duration")  %>% 
+  group_by(ID) %>% 
+  mutate(duration = if_else(is.na(night), day, night )) %>% 
+  mutate(ExperienceLevel = if_else(duration <= -.3, "advanced", if_else(duration<.8, "intermediate", "beginner"))) %>% 
+  mutate(ExperienceLevel =  replace_na(ExperienceLevel, "intermediate")) %>% 
+  select(ID, ExperienceLevel) 
+  ) %>% 
+  mutate(loadcarrying = factor(loadcarrying, levels = c("noload", "load"))) %>% 
+  mutate(gender = factor(gender, levels=c("M", "F"))) %>% 
+  mutate(day_night = factor(day_night, levels=c("day", "night"))) %>% 
+  mutate(NVG = factor(NVG, levels=c("No", "Yes"))) %>% 
+  mutate(ExperienceLevel= factor(ExperienceLevel, levels=c("beginner", "intermediate", "advanced"))) 
+  
 
-count <- df  %>% group_by(ID, course, gender) %>% select(ID, course, gender) %>% unique()
-count$gender <- factor(count$gender, levels=c("M", "F"))
-count %>% group_by(course, gender) %>% summarise(n=n())
+#summary statistics (course, gender, experience)
+df  %>% group_by(ID, course, gender) %>% select(ID, course, gender) %>% unique() %>% group_by(course, gender) %>% summarise(n=n()) %>%  pivot_wider(names_from = "gender", values_from = "n")
 
+df  %>% select(ID, course, ExperienceLevel) %>% unique() %>% group_by(course,  ExperienceLevel) %>% summarise(n=n()) %>%  pivot_wider(names_from = "ExperienceLevel", values_from = "n")
 
-###############################Write total dataset
+df  %>% select(ID, gender, ExperienceLevel) %>% unique() %>%  
+  group_by(gender, ExperienceLevel) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = "ExperienceLevel", values_from = "n")
+
+df  %>% filter(ruckweight>0) %>% select(ID, ruckweight, course) %>% unique() %>%  
+  group_by(course) %>% 
+  summarise(ruckweight = mean(ruckweight)) %>% 
+  pivot_wider(names_from = "course", values_from = "ruckweight")
+
+############################### Write total dataset
 #write.csv(df, "PaceCountData_21Oct20.csv")
 
-########################################################
-#filter out the outliers
+############################### Filter out the outliers
 #Men outliers
 Q_M_day <- df %>% filter(gender=="M", day_night=="day") %>%
      select(pacecount) %>%  quantile(probs=c(.25,.75), na.rm=TRUE)
@@ -107,78 +140,23 @@ df_outliersremoved_M_day <- df %>% filter(gender=="M", day_night=="day") %>%
         filter(pacecount >= low_M_day & pacecount <= up_M_day)
 df_outliersremoved_M_night <- df %>% filter(gender=="M", day_night=="night") %>% 
         filter(pacecount >= low_M_night & pacecount <= up_M_night)
+
 df_outliersremoved <- df_outliersremoved_F_day %>% 
      rbind(df_outliersremoved_F_night) %>% 
      rbind(df_outliersremoved_M_day) %>% 
-     rbind(df_outliersremoved_M_night)
+     rbind(df_outliersremoved_M_night) %>%
+  mutate( ExperienceLevel = factor(ExperienceLevel, levels=c("advanced", "intermediate", "beginner"))) 
 
-count2 <- df_outliersremoved  %>% group_by(ID, course, gender) %>% select(ID, gender) %>% unique()
-count2 <- count2 %>% group_by( gender) %>% summarise(n=n())
-count2_F <- count2 %>% filter(gender=="F")
-count2_M <- count2 %>% filter(gender=="M")
+#difference between day and night pacecounts by experience level
+df_outliersremoved  %>% filter(length=="long", loadcarrying=="noload") %>% 
+  select(ID, ExperienceLevel, gender, pacecount, day_night) %>% 
+  pivot_wider(names_from = "day_night", values_from = "pacecount") %>% 
+  mutate(delta = (night-day)) %>% 
+  summarySE(groupvars = c("ExperienceLevel"), measurevar = "delta", na.rm = TRUE) 
 
-#gather data
-df2 <- df_outliersremoved %>%  
-        gather(pacecount:duration, key=Category, value=measurement)
-
-#weight - height ratio
-df_wtht <- df_outliersremoved %>% select(gender, height, wtht_ratio) %>% filter (if_else(gender=="M", height>=66 & height<76,  height>=62 & height<=70 )) %>% unique() %>% summarySE(groupvars = c("height", "gender"), measurevar = "wtht_ratio") %>% mutate(high = (wtht_ratio+sd), low = (wtht_ratio-sd))
-df_wtht_M <- df_wtht %>% filter(gender=="M")  
-lm_df_wtht_low_M <- lm(low ~ height, df_wtht_M)
-lm_df_wtht_high_M <- lm(high ~ height, df_wtht_M)
-
-df_wtht_F <- df_wtht %>% filter(gender=="F")  
-lm_df_wtht_low_F <- lm(low ~ height, df_wtht_F)
-lm_df_wtht_high_F <- lm(high ~ height, df_wtht_F)
-
-df_wtht %>% select(gender, height, wtht_ratio,  low, high)  %>%
-  gather(wtht_ratio:high, key=Category, value=ratio) %>% 
-  ggplot (aes(x=height, y=ratio, color=Category)) +
-  ylab("weight / height ratio") +
-  geom_point() + geom_smooth() + facet_grid(.~gender, scales="free_x")
-
-df_outliersremoved <- df_outliersremoved %>% mutate(wtht_low = if_else(gender=="M", predict(lm_df_wtht_low_M, df_outliersremoved), predict(lm_df_wtht_low_F, df_outliersremoved))) %>% 
-  mutate(wtht_high = if_else(gender=="M", predict(lm_df_wtht_high_M, df_outliersremoved), predict(lm_df_wtht_high_F, df_outliersremoved))) %>%
-  mutate(wtht_rating = if_else(wtht_ratio <= wtht_low, "low", if_else(wtht_ratio < wtht_high, "normal", "high")))
-
-df_outliersremoved %>% ggplot(aes(x=height, y=pacecount, color=wtht_rating)) + geom_point()  + geom_smooth() + ylim(50, 120) +facet_grid(loadcarrying~gender, scales = "free_x")
-
-df_outliersremoved %>% filter(height >65 & height < 75, day_night =="night") %>% summarySE(measurevar = "pacecount", groupvars = "NVG") 
-
-df2_times <- df2 %>% filter(Category=="duration", measurement>0)
-df2_times_summary  <- df2_times  %>%  summarySE(measurevar = "measurement", groupvars = c( "course", "day_night", "loadcarrying" ), na.rm = TRUE )
-df2_times_summary_day <- df2_times  %>%  summarySE(measurevar = "measurement", groupvars = c( "day_night" ), na.rm = TRUE ) %>% filter(day_night=="day")
-df2_times_summary_night <- df2_times  %>%  summarySE(measurevar = "measurement", groupvars = c( "day_night" ), na.rm = TRUE ) %>% filter(day_night=="night")
-
-df2_times_summary2  <- df2_times    %>% filter(gender=="M") %>%   summarySE(measurevar = "measurement", groupvars = c( "day_night", "loadcarrying" ), na.rm = TRUE )
-
-df_outliersremoved2x <- df_outliersremoved %>%  filter(duration>0) %>%  
-     left_join(df2_times_summary2, by =c("loadcarrying", "day_night")) %>%
-  mutate(dur_zscore = (duration-measurement)/sd) %>%  
-  filter(loadcarrying=="noload", day_night=="night") %>% 
-  group_by(ID) %>% 
-  summarise(dur_zscore = mean(dur_zscore)) %>% 
-  mutate(ExperienceLevel = if_else(dur_zscore <= -.75, "advanced", if_else(dur_zscore <.8, "intermediate", "beginner")))
-df_outliersremoved2 <- df_outliersremoved %>% left_join(df_outliersremoved2x) %>% na.omit(ExperienceLevel)
-
-df_outliersremoved2 %>% select(ID, ExperienceLevel, gender) %>% unique() %>% group_by(ExperienceLevel) %>% summarise(n=n()/274)
-
-df_outliersremoved2 %>% summarySE(measurevar = "ruckweight", groupvars = c("ExperienceLevel" ), na.rm = TRUE )
-
-df_outliersremoved2 %>%  filter(loadcarrying=="load") %>% ggplot() + geom_boxplot(aes(x=ExperienceLevel, y=ruckweight)) 
 ################# Write file with outliers removed
 #write.csv (df_outliersremoved, "PaceCountData_21Oct20_outliersremoved.csv")
 
-
-
-#Plot of linear regression plots (all categories)
-df_outliersremoved %>%  
-        ggplot(aes(x=height, y=pacecount, color=day_night))  + 
-        geom_point(color="gray") + 
-     geom_smooth(method = "lm", aes(linetype=loadcarrying, color=day_night), size=1) + ylab("pacecount") +
-     theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-     scale_color_manual(values=c("blue", "tomato")) +
-     facet_grid(.~gender, scales = "free_x")
 ```
 
 ## Sample Summary
@@ -187,7 +165,7 @@ df_outliersremoved %>%
 Study sample size: Females n=`r count2_F$n`; Males n=`r count2_M$n`; ~1,500 observations.
 </div>
 ```{r sample summary,  message=FALSE, warning=FALSE}
-count %>% group_by(course, gender) %>% summarise(n=n()) %>%
+df %>% select (ID, course, gender) %>% unique() %>%  group_by(course, gender) %>% summarise(n=n()) %>%
   ggplot(aes(x=reorder(course, n, fun=max), y=n, fill=gender)) + 
   geom_col() + 
   ylab("# of study participants") +
@@ -220,195 +198,203 @@ count %>% group_by(course, gender) %>% summarise(n=n()) %>%
 ## Correlation plot
 
 ```{r correlation, message=FALSE, warning=FALSE}
-df_corrplot <- df_outliersremoved2 %>% filter(length == "long") %>% 
+df_corrplot <- df_outliersremoved %>% filter(length == "long") %>% 
         select (pacecount, ruckweight, day_night, height, weight, gender,  ExperienceLevel) %>%
                mutate(day_night = if_else(day_night == "day", 0, 1), 
                gender = if_else(gender == "F", 0,1),
-               experience = if_else(ExperienceLevel=="advanced", 2, if_else(ExperienceLevel=="intermediate", 1, 0))) %>% select(-ExperienceLevel)
+               experience = if_else(ExperienceLevel=="advanced", 2,
+                                    if_else(ExperienceLevel=="intermediate", 1, 0))) %>%
+  select(-ExperienceLevel)
 
-corrplot(cor(df_corrplot), method="color", order="hclust", type="full", addrect=2, cl.lim=c(-1,1), addCoef.col="black", rect.col="green", diag = FALSE, number.font=1, number.digits = 1, number.cex = .7)
+corrplot(cor(df_corrplot), method="color", order="hclust", type="lower", addrect=0, cl.lim=c(-1,1), addCoef.col="black", rect.col="green", diag = FALSE, number.font=1, number.digits = 2, number.cex = .8, tl.cex = .8, cl.pos = "n", tl.srt = 45)
 ```
 
 ## Day/Night & Solider Height
 
 ```{r heightimpact,  message=FALSE, warning=FALSE}
-df2 %>%  filter(Category=="pacecount", length=="long") %>% 
-     ggplot(aes(x=height,y=measurement, color=day_night)) +
-     geom_point(alpha=.4) + geom_smooth() +
-     scale_color_manual(values = c("green", "blue")) +
-     theme(legend.title= element_text(color="black", size=10), legend.position = "right") +
-     ylab("pace count") + xlim(58,76) + ylim(55,100)
+df_outliersremoved %>%  filter(length=="long") %>% 
+     ggplot(aes(x=height,y=pacecount, color=day_night)) +
+     geom_density2d(alpha=.8) + geom_smooth(size = 2) +
+     scale_color_manual(values = c("darkgray", "blue")) +
+     theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+     ylab("pace count") + xlab("Soldier height (inches)") +  xlim(58,76) + ylim(55,95) +
+  ggsave("day_night_height.png", height = 4 , width = 6.5, units = "in")
 ```
 
 ## Load (1 of 2)
 - points above dashed line represent pace count ***increase***
 ```{r load1,  message=FALSE, warning=FALSE}
-df2 %>% filter(length=="long", Category=="pacecount") %>% 
-        select(course , ID, day_night, loadcarrying, measurement)  %>% 
-        spread(key=loadcarrying, value=measurement) %>%  na.omit() %>% 
-     ggplot(aes(x=noload, y=load, color=day_night)) + 
-     geom_point() + 
-     geom_smooth(se=FALSE) + 
-     geom_abline(slope = 1, linetype="dashed", color='red') + 
-        ylab("pace count UNDER load") + 
-        xlab("pace count NO load") +
-        scale_color_manual(values = c("lightgreen", "blue")) + 
-        ylim(55,85) + 
-        xlim(55,85)
-
-# df2 %>% filter(length=="long", Category=="pacecount", day_night=="night") %>% 
-#          select(course , ID, day_night, loadcarrying, measurement)  %>% 
-#          spread(key=loadcarrying, value=measurement) %>%  na.omit() %>% mutate(delta=(load-noload))  %>% filter(delta<=0) %>% summarySE(measurevar = "delta", groupvars = "course")
+df_outliersremoved %>% 
+  filter(length=="long", day_night=="day") %>%
+  select(course , ID, day_night, loadcarrying, ExperienceLevel,pacecount)  %>% 
+  pivot_wider(names_from=loadcarrying, values_from=pacecount) %>%
+  mutate(delta = (load - noload)) %>% 
+  rbind(
+    df_outliersremoved %>% 
+  filter(length=="long", day_night=="night") %>%
+  select(course , ID, day_night, loadcarrying, ExperienceLevel, pacecount)  %>% 
+  pivot_wider(names_from=loadcarrying, values_from=pacecount) %>%
+  mutate(delta = (load - noload))
+    ) %>%
+#  summarySE(groupvars = c("day_night"), measurevar = "delta", na.rm=TRUE)
+  drop_na(delta) %>% 
+     ggplot(aes(x=delta, fill=day_night)) + 
+     geom_density(alpha = .3) + 
+        ylab("density") + 
+        xlab("pace count delta under load") +
+        scale_fill_manual(values = c("green", "blue")) +
+  geom_vline(xintercept = 0, linetype="dashed")
+        
 ```
 
-## Load (2 of 2)
-RSLC Student average ruck = 25 lbs; OCS average ruck = 50 lbs.
-```{r load2, message=FALSE, warning=FALSE}
-df_outliersremoved2a <- df_outliersremoved %>% select(-ruckweight, -duration) %>% filter(length!="short") %>% spread(key=loadcarrying, value = pacecount) 
 
-df_outliersremoved2b <- df_outliersremoved %>% select(ID, ruckweight) %>% filter(ruckweight>0) %>% right_join(df_outliersremoved2a) %>% mutate(LoadDelta = (load-noload)) %>% unique()
+## Load Carrying (Gender Differences)
 
-# df_outliersremoved2b %>% select(course, ID, ruckweight) %>% na.omit() %>% unique() %>%  summarySE(groupvars = "course", measurevar = "ruckweight")
+```{r loadcarrying_gender, message=FALSE, warning=FALSE}
 
-df_outliersremoved2b %>% ggplot(aes(x=height, y=LoadDelta, color=course)) + 
-  geom_point() + 
-  geom_smooth(se=FALSE) + 
-  theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-  ylim(-15,25) +
-  scale_color_manual(values = c("gray", "tomato", "red", "green")) +
-  geom_hline(yintercept = 0, linetype="dashed", color="black") +
-  ylab("individual pace count delta with load") 
+loadcarrying <- df_outliersremoved %>% 
+  filter(length=="long", day_night=="day") %>%
+  select(course , ID, day_night, height, gender, loadcarrying, ExperienceLevel,pacecount)  %>% 
+  pivot_wider(names_from=loadcarrying, values_from=pacecount) %>%
+  mutate(delta = (load - noload)) %>% 
+  rbind(
+    df_outliersremoved %>% 
+  filter(length=="long", day_night=="night") %>%
+  select(course , ID, day_night, height, gender,  loadcarrying, ExperienceLevel, pacecount)  %>% 
+  pivot_wider(names_from=loadcarrying, values_from=pacecount) %>%
+  mutate(delta = (load - noload)) 
+  ) %>% 
+    left_join(
+      df_outliersremoved %>% select(ID, ruckweight) %>% filter(ruckweight>0) %>% unique()) %>% 
+  ungroup() %>% 
+  drop_na(delta) %>% 
+  select(-load, -noload, -ID, -course) 
+
+loadcarrying %>% mutate(category = if_else(ruckweight<=35, "light", "heavy")) %>% 
+  summarySE(groupvars = c("category","gender", "day_night"), measurevar = "delta") %>% 
+  arrange(gender)
+
+loadcarrying %>% 
+  ggplot(aes(x=ruckweight, y = delta, color=gender)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(30,55)
 ```
 
 ## Ruck Weight
   
 ```{r ruckweight1,  message=FALSE, warning=FALSE}
 #impact of rucks > 35 lbs on pace count
-#df_outliersremoved2b %>% mutate(WeightCategory = ifelse(ruckweight>35, "heavy", "light"))  %>%  summarySE(groupvars = c("WeightCategory") , measurevar = "LoadDelta", na.rm = TRUE)
+#df2b %>% mutate(WeightCategory = ifelse(ruckweight>35, "heavy", "light"))  %>%  summarySE(groupvars = c("WeightCategory") , measurevar = "LoadDelta", na.rm = TRUE)
 #correlation
-#cor(df_outliersremoved2b  %>% select(ruckweight, LoadDelta) %>% na.omit())
+#cor(df2b  %>% select(ruckweight, LoadDelta) %>% na.omit())
 
-df_outliersremoved2b %>% 
+df2b %>% 
      ggplot(aes(x=ruckweight,y=LoadDelta, color=day_night)) +
-     geom_density(aes(x=ruckweight, y=..count..), color="gray",  fill="skyblue", alpha=0.2) +
+     geom_density(aes(x=ruckweight, y=..count..), color="darkgray",  fill="skyblue", alpha=0.3) +
      geom_point(alpha=.5) + 
      geom_smooth() +  
      geom_hline(yintercept = 0, linetype="dashed", color="black") + 
      scale_color_manual(values = c("green", "blue")) +
-     ylab("individual pace count delta with load") + 
-     ylim(-5, 24) + 
+     ylab("pace count delta") + 
+     ylim(-10, 24) + 
      xlim(15,55) +
     xlab("ruck weight (lbs)") +
-     geom_vline(xintercept = 35, color="red", linetype="dotted", size=1) +
      theme(legend.title= element_text(color="black", size=10), legend.position = "right")+
-     labs(caption = "Note: density function drawn for number of observations")
+   #  labs(caption = "Note: density function drawn for number of observations") +
+    ggsave("ruckweight.png", height = 4 , width = 6.5, units = "in")
 ```
 
-## Duration (1 of 4)
+## Duration (1 of 3)
 
 ```{r durationanalysis1,  message=FALSE, warning=FALSE}
-
 
 df_outliersremoved$day_night <- factor(df_outliersremoved$day_night, levels = c("night", "day"))
 df_outliersremoved$loadcarrying <- factor(df_outliersremoved$loadcarrying, levels = c("noload", "load"))
 
 df_outliersremoved %>%  filter (duration>0) %>% ggplot(aes(x=duration, y=pacecount)) +
-     geom_point() +
+     geom_point(aes(color=ExperienceLevel)) +
      facet_grid(day_night~.) +
   xlab("time duration (min)") +
   ylab("pace count") +
      geom_smooth() +
-     geom_vline(xintercept = df2_times_summary_day$measurement, color="green", linetype = "dashed" ) +
-     geom_vline(xintercept = df2_times_summary_night$measurement, color="red", linetype = "dashed" ) +
      labs(caption = "green dashed = mean DAY duration; red dashed = mean NIGHT duration")
 ```
 
-## Duration (2 of 4)
-
-```{r durationanalysis2,  message=FALSE, warning=FALSE}
-df2_times_summary %>%
-     ggplot(aes(x=course, y=round(measurement, 2), color=loadcarrying)) +
-     geom_point() +
-     geom_errorbar(aes(ymin=measurement-ci, ymax=measurement+ci), width=.1 ) +
-     coord_flip()  +
-     geom_text(aes(label=round(measurement,1)), size=3, vjust=-.4, color="black") +
-     ylab("duration on 600m course in minutes") +
-     theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-     scale_color_manual(values=c("green", "tomato")) +
-     xlab("") + facet_grid(day_night~., scales="free_x") 
-```
-
-## Duration (3 of 4)
+## Duration (2 of 3)
 Duration used to inform a dummy variable for experience.
 
-```{r durationanalysis3,  message=FALSE, warning=FALSE}
-
-
-df_outliersremoved2$day_night <- factor(df_outliersremoved2$day_night, levels=c("night", "day"))
-df_outliersremoved2$ExperienceLevel <- factor(df_outliersremoved2$ExperienceLevel, levels=c("advanced", "intermediate", "beginner"))
-
-df_outliersremoved2 %>% na.omit(ExperienceLevel) %>% 
-     ggplot(aes(x=loadcarrying, y=pacecount, color=ExperienceLevel)) +
-     geom_boxplot() +
-     stat_summary(aes(label=round(..y..,2)), fun.y="median", geom="text", size=4, color="red", vjust=-.2) +
-     facet_grid(day_night~ExperienceLevel) +
+```{r durationanalysis2,  message=FALSE, warning=FALSE}
+df_outliersremoved %>% 
+  mutate( ExperienceLevel = factor(ExperienceLevel, levels=c("advanced", "intermediate", "beginner"))) %>%
+  mutate(day_night = factor(day_night, levels=c("day", "night"))) %>% 
+     ggplot(aes(x=loadcarrying, y=pacecount, fill=day_night)) +
+     geom_boxplot(alpha=.5) +
+     stat_summary(aes(label=round(..y..,2)), fun.y="median", geom="text", size=3.5, color="red", vjust=-.2, position = position_dodge(width = .8)) +
+     facet_grid(.~ExperienceLevel) +
      xlab("") +
-     scale_color_manual(values = c("green", "skyblue", "tomato")) +
+     scale_fill_manual(values = c("darkgray", "skyblue", "tomato")) +
   theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
      ylim(55,95) +
   ylab ("pace count") +
-     labs(caption = "advanced = fastest 20% duration; beginner = slowest 20% duration; assessed from noload condition")
+  #geom_hline(yintercept = c(60, 70, 80, 90), linetype = "dashed", color = "gray") +
+  ggsave("experience.png", height = 4 , width = 6.5, units = "in")
 ```
 
-## Duration (4 of 4)
+## Duration (3 of 3)
 
-```{r durationanalysis4,  message=FALSE, warning=FALSE}
+```{r durationanalysis3,  message=FALSE, warning=FALSE}
 #Analysis of Impact of Proficiency.
-df_comp <- df_outliersremoved2 %>% filter(loadcarrying=="noload", length=="long") %>% select(ID,course, ExperienceLevel, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_noload_delta=night-day) %>% select(ID, course, day_night_noload_delta, ExperienceLevel)
-
-df_comp2 <- df_outliersremoved2 %>% filter(loadcarrying=="load", length=="long") %>% select(ID, course, day_night,pacecount) %>% spread(key=day_night, value=pacecount) %>% na.omit() %>% mutate(day_night_load_delta=night-day) %>% select(ID, course, day_night_load_delta)
-
-#summary(Ave_durationdelta)
-
-df_comp %>% left_join (df_comp2) %>% filter(course != "RSLC_Cadre") %>% 
+df_outliersremoved %>% filter(loadcarrying=="noload", length=="long") %>% 
+  select(ID, ExperienceLevel, day_night,pacecount) %>% 
+  spread(key=day_night, value=pacecount) %>% 
+  na.omit() %>% 
+  mutate(day_night_noload_delta=night-day) %>% 
+  select(ID, day_night_noload_delta, ExperienceLevel) %>% 
+  left_join(
+    df %>% filter(loadcarrying=="load", length=="long") %>% 
+      select(ID, course, day_night,pacecount) %>% 
+      spread(key=day_night, value=pacecount) %>% 
+      na.omit() %>% 
+      mutate(day_night_load_delta=night-day) %>%
+      select(ID, day_night_load_delta) 
+      ) %>% 
         ggplot(aes(x=day_night_noload_delta, y=day_night_load_delta, color=ExperienceLevel)) + 
-        geom_point(size=2)  +
-        ylim(0,25) +
-        xlim(0,25) +
-        geom_abline(slope = 1, linetype="dashed", color="black", size=1) +
-        geom_hline(yintercept = 6, linetype="dotted", color="green", size=1)+
-        geom_vline(xintercept = 6, linetype="dotted", color="green", size=1) +
-        scale_color_manual("experience level", values = c("green", "gray", "tomato")) +
+        geom_density2d(size=.5)  +
+        ylim(-5,25) +
+        xlim(-5,25) +
+        geom_abline(slope = 1, linetype="dashed", color="black", size=.5) +
+        scale_color_manual("Experience level", values = c("green", "blue", "red")) +
         xlab("Day_Night pacecount delta (noload)") +
         ylab("Day_Night pacecount delta (load)") +
         theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-        facet_wrap(course~.) +
-  labs(caption = "advanced = fastest 20% duration; beginner = slowest 20% duration; assessed from noload condition")
+  ylab("pace count delta (under load)") +
+  xlab("pace count delta (no load)") +
+       # facet_wrap(course~.) +
+  #labs(caption = "advanced = fastest 24% duration; beginner = slowest 23% duration; assessed from noload condition") +
+  ggsave("experience_deltas.png", height = 4 , width = 6.5, units = "in")
+
 ```
 
 ## Gender
 
 ```{r gender,  message=FALSE, warning=FALSE}
-# df2x <- df2 %>% filter(height>62 & height<71) %>% filter(Category=="pacecount", course=="OCS") %>% summarySE(measurevar = "measurement", groupvars = c("gender", "day_night", "height"))
-# 
-# df2x$height <-factor(df2x$height)
-
-df2  %>% filter(Category=="pacecount") %>%   
-  ggplot(aes(x=height, y=measurement, color=gender, group=gender)) + 
-  geom_point (alpha=.4) +
-  geom_smooth() +
+df_outliersremoved %>%   
+  ggplot(aes(x=height, y=pacecount, color=gender, group=gender)) + 
+  geom_density2d(alpha=.8) + geom_smooth(size = 2) +
   ylab("pace count") +
-  scale_color_manual(values = c("tomato", "skyblue")) +
-   theme(legend.title= element_text(color="black", size=10), legend.position = "right")+
-  ylim(55,120) 
+  scale_color_manual(values = c("skyblue", "tomato")) +
+   theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
+  xlab("Soldier height (inches)") + 
+  ggsave("gender.png", height = 4 , width = 6.5, units = "in")
 ```
 
 ## Solider Weight
 
 ```{r weightimpact,  message=FALSE, warning=FALSE}
-df2 %>%  filter(Category=="pacecount") %>% mutate(wt_ht=weight/height) %>%  
-     ggplot(aes(x=wt_ht,y=measurement, color=gender)) +
-     geom_point(alpha=.5) + geom_smooth() +
+df_outliersremoved %>%   mutate(wt_ht=weight/height) %>%  
+     ggplot(aes(x=weight,y=pacecount)) +
+     geom_density2d(alpha=.8) + geom_smooth(size = 2) +
      geom_hline(yintercept = 0, linetype="dashed", color="red") + 
      scale_color_manual(values = c("tomato", "skyblue")) +
      theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
@@ -419,14 +405,16 @@ df2 %>%  filter(Category=="pacecount") %>% mutate(wt_ht=weight/height) %>%
 ## Night Vision
 
 ```{r nightvision1,  message=FALSE, warning=FALSE}
-df2 %>% filter(day_night=="night", gender=="M", Category=="pacecount") %>% 
-        ggplot(aes(x=height, y=measurement, color=NVG)) +
+df_outliersremoved %>% filter(day_night=="night") %>% 
+        ggplot(aes(x=height, y=pacecount, color=NVG)) +
         geom_point(alpha=.5) +
   ylab("pace count") +
-  scale_color_manual(values = c("darkgray", "blue")) +
-  theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
-  xlim(63,76) +
-        geom_smooth(se=FALSE)
+  scale_color_manual(name = "night vision", values = c("darkgray", "blue")) +
+  theme(legend.title= element_text(color="black", size=10), legend.position = "right") +
+  xlim(63,76) + ylim(60,100) +
+  xlab("Soldier height (inches)") +
+        geom_smooth() +
+  ggsave("nightvision.png", height = 4 , width = 6.5, units = "in")
 ```
 
 ## Precision
@@ -459,9 +447,8 @@ df_precision_plot %>%
 
 ## What Matters (2 of 3) |Machine Learning (Regression Trees)
 ```{r whatmatters1,  message=FALSE, warning=FALSE}
-df_regressiontrees <- df_outliersremoved2 %>%  
-     filter(length=="long") 
-m <- rpart (pacecount ~ ExperienceLevel + height + day_night + ruckweight   , data = df_regressiontrees)
+m <- rpart (pacecount ~ ExperienceLevel + height + day_night + ruckweight , data = df_outliersremoved %>%  
+     filter(length=="long"))
 predict_trees <- predict(m, df_regressiontrees)
 regtree_importance <- as.data.frame(m$variable.importance) %>% as.data.frame()
 max_importance <- max(regtree_importance$`m$variable.importance`)
@@ -474,28 +461,44 @@ regtree_report %>% ggplot () + geom_col(aes(x=reorder(Feature, Importance, fun=m
 ## What Matters (3 of 3)|Machine Learning (Regression Trees)
 
 ```{r whatmatters2,  message=FALSE, warning=FALSE}
-rpart.plot(m, digits=2, fallen.leaves = TRUE, type=5, extra=101)
+rpart.plot(m, digits=2, fallen.leaves = FALSE, type=5, extra=0, tweak = 1.1)
 ```
 
 ## Course Comparison (1 of 2)
 Short (100m) vs. long (600m) course results: points expected near dashed line
 
 ```{r coursecomparison2,  message=FALSE, warning=FALSE}
-df %>% filter(loadcarrying=="noload", day_night=="day") %>% 
-        select(course, ID, length, pacecount) %>% 
+df_outliersremoved %>% filter(loadcarrying=="noload", day_night=="day") %>% 
+        select(course, ID, ExperienceLevel, length, pacecount) %>% 
+        spread(key=length, value=pacecount)  %>% 
+        na.omit() %>%
+        mutate(delta=(long-short)) %>%
+  ggplot(aes(x=delta)) + geom_histogram(binwidth = 2)
+  
+df_outliersremoved %>% filter(loadcarrying=="noload", day_night=="day") %>% 
+        select(course, ID, ExperienceLevel, length, pacecount) %>% 
+        spread(key=length, value=pacecount)  %>% 
+        na.omit() %>%
+        mutate(delta=(long-short)) %>% 
+  mutate(precise = if_else(abs(delta) <= 5, "yes", "no")) %>%
+  mutate(direction = if_else(delta>2, "long", if_else(delta<(-2), "short", "none"))) %>% 
+  summarySE(groupvars = "precise", measurevar = "delta")
+
+df_outliersremoved %>% filter(loadcarrying=="noload", day_night=="day") %>% 
+        select(course, ID, ExperienceLevel, length, pacecount) %>% 
         spread(key=length, value=pacecount)  %>% 
         na.omit() %>%
         mutate(Delta=abs(long-short)) %>% 
         mutate(Delta_Courses=ifelse(Delta>3, "large(>3)", "small(<=3)")) %>% 
-     ggplot(aes(x=short, y=long, color=Delta_Courses)) +
-     geom_point(alpha=.7) + 
+     ggplot(aes(x=short, y=long)) +
+     geom_density_2d(alpha=.7) + 
      geom_abline(slope = 1, linetype="dashed", color='red') + 
      scale_color_manual(values=c("tomato", "skyblue")) +
      theme(legend.title= element_text(color="black", size=10), legend.position = "top") +
      ylab("pace count (600m course)") + 
      xlab("pace count (100m course)") +
      xlim(55,85) + 
-     ylim(55,85)
+     ylim(55,85) + facet_grid(.~ExperienceLevel)
 ```
 
 ## Course Comparison (2 of 2)
@@ -534,9 +537,9 @@ c <- df_outliersremoved %>%
   mutate(Event="PaceCountStudy", Category="RuckPaceCount2") %>% 
   select(Category, pacecount, Event)
 
-df_comparison <- df_LandNav %>% rbind(a, b, c)
-df_comparison$pacecount <- as.numeric(df_comparison$pacecount) 
-df_comparison <- df_comparison %>% na.omit() %>% filter(pacecount<110)
+df_comparison <- df_LandNav %>% rbind(a, b, c) %>%
+  mutate(pacecount = as.numeric(pacecount) )  %>%
+  na.omit(pacecount) %>% filter(pacecount<110)
 
 df_comparison %>% summarySE(measurevar = "pacecount", groupvars = c("Event", "Category")) %>% 
      ggplot(aes(x=reorder(Category, pacecount, fun=mean), y=pacecount, color=Event, group=Event)) +
